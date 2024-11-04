@@ -1,0 +1,22 @@
+1. Which function called `syscall`?
+- It was function `usertrap` in `kernel/trap.c` at line 67.
+
+2. What is the value of `p->trapframe->a7` and what does that value represent?
+- `p->trapframe->a7` represents the register `$a7`, whose value is `SYS_exec` (which is `7`).
+
+3. What was the previous mode that the CPU was in?
+- The value of `$sstatus` is `0x200000022`, the SSP bit is `1`, therefore, the previous mode was user-mode.
+
+4. Write down the assembly instruction the kernel is panicking at. Which register corresponds to the variable `num`?
+- The assembly instruction: `lw	a3,0(zero)`
+- The register for variable `num` is `$a3`
+
+5. Why does the kernel crash? Is that confirmed by the value in `scause`?
+- The kernel crash because we are trying to load word from address `0x0` which wasn't mapped in kernel address space.
+- The value of `scause` confirmed it. Its value was `0xd` which is *load page-fault*.
+
+6. What is the name of the process that was running when the kernel paniced? What is its process id?
+- The process name: `p->name` was `initcode`.
+- The process id: `p->pid` was `1`.
+
+
