@@ -19,4 +19,6 @@
 - The process name: `p->name` was `initcode`.
 - The process id: `p->pid` was `1`.
 
-
+7. Our attack doesn't work anymore when change the offset 32 to 0.
+- Because the first 8 bytes each pages are used to store information in the next pages.
+We set them in `kernel/kalloc.c:66`.
