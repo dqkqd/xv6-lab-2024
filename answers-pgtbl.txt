@@ -52,3 +52,8 @@ va 0x4000 pte 0x21FD40D7 pa 0x87F50000 perm 0xD7
   - global trampoline
   - permission: 0x4B: 0001001011
                          g--x-r
+
+2. Which other xv6 system call(s) could be made faster using this shared page? Explain how. 
+
+- We can make `sys_chdir` faster by storing `p->cwd` inside `usyscall`.
+- We can make `sys_close` faster by storing `p->ofile` inside `usyscall`.
