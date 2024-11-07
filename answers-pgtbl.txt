@@ -1,0 +1,54 @@
+1. Inspect a user-process page table
+
+permission mapping:
+    0000000000
+      daguxwrv
+
+- va 0x0 pte 0x21FCD45B pa 0x87F35000 perm 0x5B
+  - text of the program
+  - permission: 0x5B: 0001011011
+                           ux-r
+
+- va 0x1000 pte 0x21FD441B pa 0x87F51000 perm 0x1B
+  - unused
+  - permission: 0x1B: 0000011011
+                           ux-r
+
+- va 0x2000 pte 0x21FD1417 pa 0x87F45000 perm 0x17
+  - pre-initialized data of the program
+  - permission: 0x17: 0000010111
+                           u-wr
+
+- va 0x3000 pte 0x21FD1007 pa 0x87F44000 perm 0x7
+  - guard page
+  - permission: 0x7: 0000000111
+                          --wr
+
+va 0x4000 pte 0x21FD40D7 pa 0x87F50000 perm 0xD7
+  - stack page
+  - permission: 0xD7: 0011010111
+                           u-wr
+
+- va 0x5000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0x6000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0x7000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0x8000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0x9000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFF6000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFF7000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFF8000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFF9000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFFA000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFFB000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFFC000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+- va 0xFFFFD000 pte 0x0 pa 0x0 perm 0x0 : unallocated heap
+
+- va 0xFFFFE000 pte 0x21FC94C7 pa 0x87F25000 perm 0xC7
+  - global trapframe
+  - permission: 0xC7: 0011000111
+                         g---wr
+
+- va 0xFFFFF000 pte 0x2000184B pa 0x80006000 perm 0x4B
+  - global trampoline
+  - permission: 0x4B: 0001001011
+                         g--x-r
