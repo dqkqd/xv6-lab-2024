@@ -66,6 +66,10 @@ void            ramdiskrw(struct buf*);
 // kalloc.c
 void*           kalloc(void);
 void            kfree(void *);
+void*           superalloc(void);
+void            superfree(void *);
+int             isnormalpg(void *pa);
+int             issuperpg(void *pa);
 void            kinit(void);
 
 // log.c
@@ -176,7 +180,7 @@ int             uvmcopy(pagetable_t, pagetable_t, uint64);
 void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
-pte_t *         walk(pagetable_t, uint64, int);
+pte_t *         walk(pagetable_t, uint64, int, int);
 uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);

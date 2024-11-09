@@ -366,6 +366,8 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define SUPERPGSIZE (2 * (1 << 20)) // bytes per page
 #define SUPERPGROUNDUP(sz)  (((sz)+SUPERPGSIZE-1) & ~(SUPERPGSIZE-1))
 #endif
+#define NUMSUPERPG 15
+#define SUPERPGSTART PHYSTOP - NUMSUPERPG * SUPERPGSIZE
 
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
