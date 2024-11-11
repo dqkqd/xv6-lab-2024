@@ -1,0 +1,29 @@
+1. Which registers contain arguments to functions? For example, which register holds 13 in main's call to `printf`?
+- Registers `a0`, `a1`, `a2` contain arguments to functions
+  For function `printf`:
+    - `a0` points to "%d %d\n" in memory
+    - `a1` contains 12
+    - `a2` contains 13
+
+2. Where is the call to function `f` in the assembly code for main? Where is the call to `g`?
+- The compiler optimized the code and inlined those function calls. The values of the call `f(8) + 1` is computed at compile time and put directly into `a2`.
+
+3. At what address is the function `printf` located?
+- It is located at `6e2`, we can see the jump in `jal	6e2 <printf>`
+
+4. What value is in the register `ra` just after the `jalr` to `printf` in `main`?
+- `ra` point the return address. In this case, before `jalr` call, `ra` points to `0x4e` (which is the exit of the main function). After the call, `ra` points to `0x3c`, which is the line `exit(0)` in `main`.
+
+5. What is the output?
+- It is `HE110 World`
+  - The hex value of `57616` is `E110`
+  - The ascii value of `0x00646c72` is:
+    - `0x00`: null character
+    - `0x64`: d
+    - `0x6c`: l
+    - `0x72`: r
+  - Because RISC-V is little-endian, the value was reversed.
+- In big-endian system, `57616` will still represent as `E110` because it is the directly value of integer 32, not the pointer to some address. However the value of `i` will need to be reversed to `0x726c6400`.
+
+6. The value after `y=`, it will be the value in register `a2`.
+
