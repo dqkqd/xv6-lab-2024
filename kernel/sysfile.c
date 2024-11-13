@@ -507,13 +507,14 @@ sys_pipe(void)
 uint64
 sys_sigalarm(void)
 {
-  printf("Alarm\n");
+  struct proc *p = myproc();
+  argint(0, &p->interval);
+  argaddr(1, &p->handler);
   return 0;
 }
 
 uint64
 sys_sigreturn(void)
 {
-  printf("Return\n");
   return 0;
 }

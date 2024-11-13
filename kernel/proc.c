@@ -146,6 +146,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  acquire(&tickslock);
+  p->nextticks = ticks;
+  release(&tickslock);
+
   return p;
 }
 
