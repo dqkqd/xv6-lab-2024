@@ -503,3 +503,17 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_sigalarm(void)
+{
+  printf("Alarm\n");
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  printf("Return\n");
+  return 0;
+}
