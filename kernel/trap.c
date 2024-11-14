@@ -78,13 +78,29 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2){
-    acquire(&tickslock);
-    if(p->nextticks <= ticks){
-      p->nextticks += p->interval;
-      // point to handler pointer
-      p->trapframe->epc = p->handler;
+
+    // if handler is enabled through sigalarm
+    if(p->handler->enabled){
+      // decrease ticks, only decrease if it less than 0, to avoid underflow
+      if(p->handler->ticks >= 0)
+        p->handler->ticks--;
+
+      // if handler is not running and it should be invoked
+      if(p->handler->running == 0 && p->handler->ticks == 0){
+        // set running state
+        p->handler->running = 1;
+
+        // reset interval
+        p->handler->ticks = p->handler->interval;
+
+        // save current state
+        *p->handler->trapframe = *p->trapframe;
+
+        // set epc to handler to invoke
+        p->trapframe->epc = p->handler->handlerpointer;
+      }
     }
-    release(&tickslock);
+
     yield();
   }
 

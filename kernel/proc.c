@@ -146,9 +146,19 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
-  acquire(&tickslock);
-  p->nextticks = ticks;
-  release(&tickslock);
+  if((p->handler = (struct prochandler*)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  if((p->handler->trapframe = (struct trapframe*)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  p->handler->enabled = 0;
+  p->handler->running = 0;
 
   return p;
 }
@@ -162,6 +172,13 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  if(p->handler){
+    if(p->handler->trapframe)
+      kfree((void*)p->handler->trapframe);
+    p->handler->trapframe = 0;
+    kfree((void*)p->handler);
+    p->handler = 0;
+  }
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;

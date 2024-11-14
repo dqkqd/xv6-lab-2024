@@ -508,13 +508,30 @@ uint64
 sys_sigalarm(void)
 {
   struct proc *p = myproc();
-  argint(0, &p->interval);
-  argaddr(1, &p->handler);
+  argint(0, &p->handler->interval);
+  argaddr(1, &p->handler->handlerpointer);
+
+  // enable handler
+  p->handler->enabled = 1;
+  // make sure it is not running
+  p->handler->running = 0;
+  // set ticks
+  p->handler->ticks = p->handler->interval;
+
   return 0;
 }
 
 uint64
 sys_sigreturn(void)
 {
-  return 0;
+  struct proc *p = myproc();
+
+  // make sure it is not running
+  p->handler->running = 0;
+
+  // reset state
+  *p->trapframe = *p->handler->trapframe;
+ 
+  // return to a0
+  return p->trapframe->a0;
 }

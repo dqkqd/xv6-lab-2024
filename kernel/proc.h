@@ -81,6 +81,16 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+struct prochandler {
+  int enabled;                  // whether handler is enabled through sigalarm
+  int running;                  // whether handler is running
+  int ticks;                    // ticks counter, if it is 0, handler should be invoked
+
+  int interval;                 // handler interval
+  uint64 handlerpointer;           // pointer to handler to execute in userspace
+  struct trapframe *trapframe;  // trapframe to store the register state before running handler
+};
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -105,7 +115,5 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 
-  uint nextticks;
-  int interval;
-  uint64 handler;
+  struct prochandler *handler; // periodic handler
 };
