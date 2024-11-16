@@ -314,8 +314,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
-  uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -323,14 +321,21 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    // change pte to readonly when copying
+    if(*pte & PTE_W){
+      *pte &= ~PTE_W;
+      *pte |= PTE_COW;
+    }
+
+    if((*pte & PTE_R) == 0)
+      panic("uvmcopy: cannot read page");
+
+    // map to the old page
+    if(mappages(new, i, PGSIZE, pa, *pte) != 0){
       goto err;
     }
+    incrpgref(pa);
   }
   return 0;
 
@@ -366,9 +371,17 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
-    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+
+    // invalid
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0){
       return -1;
+    }
+
+    // unwritable
+    if((*pte & PTE_W) == 0 && copyaswritable(pagetable, va0) != 0){
+      return -1;
+    }
+
     pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if(n > len)
@@ -448,4 +461,58 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// Copy page to a new page and make it writable
+// if it is originally writable
+// return 0 on success, -1 on failure
+int
+copyaswritable(pagetable_t pagetable, uint64 va)
+{
+  va = PGROUNDDOWN(va);
+
+  // invalid virtual address
+  if(va >= MAXVA)
+    return -1;
+
+  pte_t* pte = walk(pagetable, va, 0);
+
+  // do not handle unmapped virtual address
+  if(pte == 0)
+    return -1;
+
+  // do not handle non CoW page
+  if ((*pte & PTE_COW) == 0)
+    return -1;
+
+  // expect permission for new wriable pages
+  uint perm =  (*pte | PTE_W) & (~PTE_COW);
+
+  uint64 pa = PTE2PA(*pte);
+
+  if(getpgref(pa) == 1){
+    // If there is only one reference (self-reference),
+    // we don't need to allocate new page for this.
+    // Instead we just change its permssion to allow writing.
+    *pte = perm;
+  } else {
+    // allocate new page for write
+    void* mem = kalloc();
+    if(mem == 0)
+      return -1;
+
+    // copy to new allocated memory
+    memmove(mem, (void*)pa, PGSIZE);
+    // then unmap it
+    uvmunmap(pagetable, va, 1, 1);
+    // and remap it again with new flags
+    // filter flags to avoid mapping redundant values. E.g: physical address
+    int flags = PTE_FLAGS(perm);
+    if (mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0) {
+      panic("copyonwrite: mappages");
+    }
+  }
+
+  return 0;
+
 }

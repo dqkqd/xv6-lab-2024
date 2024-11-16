@@ -9,6 +9,14 @@
 #include "riscv.h"
 #include "defs.h"
 
+#define TOTALPG ((PHYSTOP - KERNBASE) / PGSIZE + 1)
+#define PGREFINDEX(page) (((uint64)page - KERNBASE) / PGSIZE)
+struct {
+  struct spinlock lock;
+  int count[TOTALPG];
+} pgref;
+
+void initpgref(void);
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -27,7 +35,61 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&pgref.lock, "pgref");
+  initpgref();
   freerange(end, (void*)PHYSTOP);
+}
+
+int
+getpgref(uint64 page)
+{
+  if(page < KERNBASE || page >= PHYSTOP){
+    panic("getpgref: overflow");
+  }
+
+  int index = PGREFINDEX(page);
+  int refcount = 0;
+
+  acquire(&pgref.lock);
+  refcount = pgref.count[index];
+  release(&pgref.lock);
+
+  return refcount;
+}
+
+int
+incrpgref(uint64 page)
+{
+  if(page < KERNBASE || page >= PHYSTOP){
+    panic("incrpgref: overflow");
+  }
+
+  int index = PGREFINDEX(page);
+  int refcount = 0;
+
+  acquire(&pgref.lock);
+  refcount = ++pgref.count[index];
+  release(&pgref.lock);
+
+  return refcount;
+}
+
+int
+decrpgrc(uint64 page)
+{
+  if(page < KERNBASE || page >= PHYSTOP){
+    panic("decrpgrc: overflow");
+  }
+
+  int index = PGREFINDEX(page);
+  int refcount = 0;
+
+  acquire(&pgref.lock);
+  if(pgref.count[index] > 0)
+    refcount = --pgref.count[index];
+  release(&pgref.lock);
+
+  return refcount;
 }
 
 void
@@ -37,6 +99,15 @@ freerange(void *pa_start, void *pa_end)
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     kfree(p);
+}
+
+void
+initpgref()
+{
+  acquire(&pgref.lock);
+  for(int i=0; i < TOTALPG; ++i)
+    pgref.count[i] = 0;
+  release(&pgref.lock);
 }
 
 // Free the page of physical memory pointed at by pa,
@@ -51,15 +122,18 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
+  int refcount;
+  if((refcount = decrpgrc((uint64)pa)) == 0){
+    // Fill with junk to catch dangling refs.
+    memset(pa, 1, PGSIZE);
 
-  r = (struct run*)pa;
+    r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+    acquire(&kmem.lock);
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+    release(&kmem.lock);
+  }
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -76,7 +150,11 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    if(incrpgref((uint64)r) != 1){
+      panic("kalloc: init page must have refcount = 1");
+    }
+  }
   return (void*)r;
 }
