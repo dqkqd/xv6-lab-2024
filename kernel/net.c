@@ -26,7 +26,10 @@ struct packetqueue {
   struct spinlock lock;
 
   int binded;
-  char* data[PACKET_LIMIT];
+
+  int head;                 // head element's index
+  int size;                 // current size of the queue
+  char* data[PACKET_LIMIT]; // queue data
 };
 
 static struct packetqueue packetqueues[NPORTS];
@@ -36,6 +39,8 @@ packetqueueinit(struct packetqueue *queue)
 {
   initlock(&queue->lock, "lock");
   queue->binded = 0;
+  queue->head = 0;
+  queue->size = 0;
   for(int i = 0; i < PACKET_LIMIT; i++){
     queue->data[i] = 0;
   }
@@ -45,12 +50,55 @@ void
 packetqueuefree(struct packetqueue *queue)
 {
   queue->binded = 0;
+  queue->head = 0;
+  queue->size = 0;
   for(int i = 0; i < PACKET_LIMIT; i++){
     if(queue->data[i]){
       kfree(queue->data[i]);
     }
     queue->data[i] = 0;
   }
+}
+
+// push element into the queue,
+// return 0 on success, -1 on failure
+int
+packetqueuepush(struct packetqueue *queue, char* element)
+{
+  if(queue->size >= PACKET_LIMIT){
+    printf("packetqueuepush: full");
+    return -1;
+  }
+
+  // index where we should push this element into
+  int index = (queue->head + queue->size) % PACKET_LIMIT;
+
+  if(queue->data[index] != 0)
+    panic("packetqueuepush: non-empty data");
+
+  queue->data[index] = element;
+  queue->size++;
+
+  return 0;
+}
+
+// pop head element from the queue,
+// return pointer to poped element, return 0 on failure
+char*
+packetqueuepop(struct packetqueue *queue)
+{
+  if(queue->size == 0)
+    return 0;
+  char* data = queue->data[queue->head];
+
+  if(data == 0)
+    panic("packetqueuepop: data is empty");
+
+  queue->data[queue->head] = 0;
+  queue->head = (queue->head + 1) % PACKET_LIMIT;
+  queue->size--;
+
+  return data;
 }
 
 void
@@ -250,6 +298,7 @@ ip_rx(char *buf, int len)
   //
   // Your code here.
   //
+
   
   kfree(buf);
 }
