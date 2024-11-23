@@ -19,10 +19,47 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+#define NPORTS (1 << 16)
+#define PACKET_LIMIT 16
+
+struct packetqueue {
+  struct spinlock lock;
+
+  int binded;
+  char* data[PACKET_LIMIT];
+};
+
+static struct packetqueue packetqueues[NPORTS];
+
+void
+packetqueueinit(struct packetqueue *queue)
+{
+  initlock(&queue->lock, "lock");
+  queue->binded = 0;
+  for(int i = 0; i < PACKET_LIMIT; i++){
+    queue->data[i] = 0;
+  }
+}
+
+void
+packetqueuefree(struct packetqueue *queue)
+{
+  queue->binded = 0;
+  for(int i = 0; i < PACKET_LIMIT; i++){
+    if(queue->data[i]){
+      kfree(queue->data[i]);
+    }
+    queue->data[i] = 0;
+  }
+}
+
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
+  for(int port = 0; port < NPORTS; port++){
+    packetqueueinit(&packetqueues[port]);
+  }
 }
 
 
@@ -37,8 +74,21 @@ sys_bind(void)
   //
   // Your code here.
   //
+  
+  int port;
+  argint(0, &port);
 
-  return -1;
+  struct packetqueue *queue = &packetqueues[port];
+
+  acquire(&queue->lock);
+  if(queue->binded){
+    release(&queue->lock);
+    return -1;
+  }
+
+  queue->binded = 1;
+  release(&queue->lock);
+  return 0;
 }
 
 //
@@ -52,6 +102,15 @@ sys_unbind(void)
   //
   // Optional: Your code here.
   //
+
+  int port;
+  argint(0, &port);
+
+  struct packetqueue *queue = &packetqueues[port];
+
+  acquire(&queue->lock);
+  packetqueuefree(queue);
+  release(&queue->lock);
 
   return 0;
 }
