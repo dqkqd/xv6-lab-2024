@@ -192,6 +192,7 @@ ip_rx(char *buf, int len)
   // Your code here.
   //
   
+  kfree(buf);
 }
 
 //

@@ -19,6 +19,8 @@ static char *rx_bufs[RX_RING_SIZE];
 static volatile uint32 *regs;
 
 struct spinlock e1000_lock;
+struct spinlock e1000_tx_lock;
+struct spinlock e1000_rx_lock;
 
 // called by pci_init().
 // xregs is the memory address at which the
@@ -29,6 +31,8 @@ e1000_init(uint32 *xregs)
   int i;
 
   initlock(&e1000_lock, "e1000");
+  initlock(&e1000_tx_lock, "e1000_tx_lock");
+  initlock(&e1000_rx_lock, "e1000_rx_lock");
 
   regs = xregs;
 
@@ -92,6 +96,12 @@ e1000_init(uint32 *xregs)
 }
 
 int
+next_e1000_transmit_index(int index)
+{
+  return (index + 1) % TX_RING_SIZE;
+}
+
+int
 e1000_transmit(char *buf, int len)
 {
   //
@@ -101,9 +111,45 @@ e1000_transmit(char *buf, int len)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after send completes.
   //
+  acquire(&e1000_tx_lock);
 
-  
+  int tail_index = regs[E1000_TDT];
+  int head_index = regs[E1000_TDH];
+
+  if(next_e1000_transmit_index(tail_index) == head_index)
+    goto transmit_err;
+
+  if((tx_ring[tail_index].status & E1000_TXD_STAT_DD) == 0)
+    goto transmit_err;
+
+  if(tx_bufs[tail_index] != 0)
+    kfree(tx_bufs[tail_index]);
+
+  tx_bufs[tail_index] = buf;
+
+  tx_ring[tail_index].addr = (uint64) buf;
+  tx_ring[tail_index].length = len;
+  tx_ring[tail_index].cso = 0;
+  tx_ring[tail_index].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+  tx_ring[tail_index].status = 0;
+  tx_ring[tail_index].css = 0;
+  tx_ring[tail_index].special = 0;
+
+  regs[E1000_TDT] = next_e1000_transmit_index(tail_index);
+
+  release(&e1000_tx_lock);
   return 0;
+
+transmit_err:
+  release(&e1000_tx_lock);
+  kfree(buf);
+  return -1;
+}
+
+int
+next_e1000_recv_index(int index)
+{
+  return (index + 1) % RX_RING_SIZE;
 }
 
 static void
@@ -115,7 +161,30 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver a buf for each packet (using net_rx()).
   //
+  acquire(&e1000_rx_lock);
 
+  while(1){
+    int next_index = next_e1000_recv_index(regs[E1000_RDT]);
+
+    if((rx_ring[next_index].status & E1000_RXD_STAT_DD) == 0)
+      break;
+
+    net_rx(rx_bufs[next_index], rx_ring[next_index].length);
+
+    rx_bufs[next_index] = kalloc();
+    if (!rx_bufs[next_index])
+      panic("e1000_recv");
+    rx_ring[next_index].addr = (uint64) rx_bufs[next_index];
+    rx_ring[next_index].length = 0;
+    rx_ring[next_index].csum = 0;
+    rx_ring[next_index].status = E1000_RXD_STAT_EOP;
+    rx_ring[next_index].errors = 0;
+    rx_ring[next_index].special = 0;
+
+    regs[E1000_RDT] = next_index;
+  }
+
+  release(&e1000_rx_lock);
 }
 
 void
