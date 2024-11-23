@@ -65,10 +65,11 @@ packetqueuefree(struct packetqueue *queue)
 int
 packetqueuepush(struct packetqueue *queue, char* element)
 {
-  if(queue->size >= PACKET_LIMIT){
-    printf("packetqueuepush: full");
+  if(queue->binded == 0)
     return -1;
-  }
+
+  if(queue->size >= PACKET_LIMIT)
+    return -1;
 
   // index where we should push this element into
   int index = (queue->head + queue->size) % PACKET_LIMIT;
@@ -87,10 +88,13 @@ packetqueuepush(struct packetqueue *queue, char* element)
 char*
 packetqueuepop(struct packetqueue *queue)
 {
+  if(queue->binded == 0)
+    return 0;
+
   if(queue->size == 0)
     return 0;
-  char* data = queue->data[queue->head];
 
+  char* data = queue->data[queue->head];
   if(data == 0)
     panic("packetqueuepop: data is empty");
 
@@ -183,7 +187,71 @@ sys_recv(void)
 {
   //
   // Your code here.
-  //
+
+  struct proc* p = myproc();
+
+  int dport;
+  uint64 srcaddr;
+  uint64 sportaddr;
+  uint64 bufaddr;
+  int maxlen;
+
+  argint(0, &dport);
+  argaddr(1, &srcaddr);
+  argaddr(2, &sportaddr);
+  argaddr(3, &bufaddr);
+  argint(4, &maxlen);
+
+  struct packetqueue* queue = &packetqueues[dport];
+
+  acquire(&queue->lock);
+
+  // check if the port is binded
+  if(queue->binded == 0){
+    printf("sys_recv: dport has not binded\n");
+    goto err;
+  }
+  
+  // waiting for new packet available
+  char* buf;
+  while((buf = packetqueuepop(queue)) == 0){
+    sleep(&queue->binded, &queue->lock);
+  }
+
+  struct eth *eth = (struct eth *) buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+  if(ip->ip_p != IPPROTO_UDP){
+    printf("sys_recv: not an udp packet\n");
+    goto err;
+  }
+
+  uint32 src = ntohl(ip->ip_src);
+  if(copyout(p->pagetable, srcaddr, (char*)&src, sizeof(src)) < 0){
+    printf("sys_recv: copyout src\n");
+    goto err;
+  }
+
+  struct udp *udp = (struct udp *)(ip + 1);
+  uint16 sport = ntohs(udp->sport);
+  if(copyout(p->pagetable, sportaddr, (char*)&sport, sizeof(sport)) < 0){
+    printf("sys_recv: copyout sport\n");
+    goto err;
+  }
+
+  char *payload = (char *)(udp + 1);
+  if(copyout(p->pagetable, bufaddr, payload, maxlen) < 0){
+    printf("sys_recv: copyout payload\n");
+    goto err;
+  }
+
+  int len = ntohs(udp->ulen) - sizeof(*udp);
+
+  kfree(buf);
+  release(&queue->lock);
+  return len;
+
+err:
+  release(&queue->lock);
   return -1;
 }
 
@@ -299,8 +367,30 @@ ip_rx(char *buf, int len)
   // Your code here.
   //
 
-  
-  kfree(buf);
+  struct eth *eth = (struct eth *) buf;
+
+  struct ip *ip = (struct ip *)(eth + 1);
+  if (ip->ip_p != IPPROTO_UDP){
+    printf("ip_rx: only support udp for now");
+    kfree(buf);
+    return;
+  }
+
+  struct udp *udp = (struct udp *)(ip + 1);
+  uint16 dport = ntohs(udp->dport);
+  struct packetqueue *queue = &packetqueues[dport];
+
+  acquire(&queue->lock);
+
+  if(packetqueuepush(queue, buf) < 0){
+    kfree(buf);
+    release(&queue->lock);
+  } else {
+    // wakeup other sleeping processes upon success
+    wakeup(&queue->binded);
+    release(&queue->lock);
+  }
+
 }
 
 //
