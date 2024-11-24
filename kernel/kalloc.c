@@ -11,8 +11,6 @@
 
 #define KNCPUS 1
 
-void freerange(void *pa_start, void *pa_end);
-
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
@@ -21,41 +19,32 @@ struct run {
 };
 
 struct kmem {
+  int index;
+
+  uint64 pa_start;      // start address of freelist
+  uint64 pa_end;        // end address of freelist
+
   struct spinlock lock;
   struct run *freelist;
 };
 
+void  kmeminit(struct kmem*);
+void* kmemalloc(struct kmem*);
+void  kmemfree(struct kmem*, void*);
+void  kmemfreerange(struct kmem*);
+
 static struct kmem kmems[KNCPUS];
 
-int
-getcpuindex(void)
-{
-  return (1 % KNCPUS);
-}
-
-struct kmem*
-currentkmem()
-{
-  int cpuid = getcpuindex();
-  return &kmems[cpuid];
-}
-
+struct kmem * currentkmem(void);
 
 void
 kinit()
 {
-  struct kmem *kmem = currentkmem();
-  initlock(&kmem->lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
-}
-
-void
-freerange(void *pa_start, void *pa_end)
-{
-  char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
-    kfree(p);
+  for(int i = 0; i < KNCPUS; ++i){
+    kmems[i].index = i;
+    kmeminit(&kmems[i]);
+    kmemfreerange(&kmems[i]);
+  }
 }
 
 // Free the page of physical memory pointed at by pa,
@@ -65,22 +54,7 @@ freerange(void *pa_start, void *pa_end)
 void
 kfree(void *pa)
 {
-  struct run *r;
-
-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
-    panic("kfree");
-
-  // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
-
-  r = (struct run*)pa;
-
-  struct kmem *kmem = currentkmem();
-
-  acquire(&kmem->lock);
-  r->next = kmem->freelist;
-  kmem->freelist = r;
-  release(&kmem->lock);
+  kmemfree(currentkmem(), pa);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -89,9 +63,33 @@ kfree(void *pa)
 void *
 kalloc(void)
 {
-  struct run *r;
+  return kmemalloc(currentkmem());
+}
 
-  struct kmem *kmem = currentkmem();
+void
+kmeminit(struct kmem *kmem)
+{
+  uint64 first = PGROUNDUP((uint64)end);
+  uint64 last = (uint64)PHYSTOP;
+  uint64 total = last - first;
+  uint64 npages = total / PGSIZE;
+
+
+  uint64 npages_per_cpu = npages / KNCPUS;
+  uint64 pa_start = first + kmem->index * npages_per_cpu * PGSIZE;
+  uint64 pa_end = first + (kmem->index + 1) * npages_per_cpu * PGSIZE;
+  if(pa_end > last)
+    pa_end = last;
+
+  kmem->pa_start = pa_start;
+  kmem->pa_end = pa_end;
+  initlock(&kmem->lock, "kmem");
+}
+
+void *
+kmemalloc(struct kmem *kmem)
+{
+  struct run *r;
 
   acquire(&kmem->lock);
   r = kmem->freelist;
@@ -102,4 +100,44 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+void
+kmemfree(struct kmem *kmem, void *pa)
+{
+  struct run *r;
+
+  if(((uint64)pa % PGSIZE) != 0 || (uint64)pa < kmem->pa_start || (uint64)pa >= kmem->pa_end)
+    panic("kmemfree");
+
+  // Fill with junk to catch dangling refs.
+  memset(pa, 1, PGSIZE);
+
+  r = (struct run*)pa;
+
+  acquire(&kmem->lock);
+  r->next = kmem->freelist;
+  kmem->freelist = r;
+  release(&kmem->lock);
+}
+
+void
+kmemfreerange(struct kmem *kmem)
+{
+  char *p = (char*)kmem->pa_start;
+  for(; p + PGSIZE <= (char*)kmem->pa_end; p += PGSIZE)
+    kmemfree(kmem, p);
+}
+
+int
+getcpuindex(void)
+{
+  return (1 % KNCPUS);
+}
+
+struct kmem*
+currentkmem(void)
+{
+  int cpuid = getcpuindex();
+  return &kmems[cpuid];
 }
