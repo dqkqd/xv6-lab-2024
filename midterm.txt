@@ -1,0 +1,64 @@
+https://pdos.csail.mit.edu/6.1810/2024/quiz/q24-1.pdf
+
+I. System calls
+
+1. (correct +3)
+ There are at most 4 processes.
+ The first process is the main process. This print _nothing_.
+ The second process is the first forked process _from main_. This print `x`.
+ The third process is the second forked process _from main_. This prints `y`.`
+ The fourth process is the second forked process _from the first forked process_. This prints `y`.
+ The fourth process must come after the second. There for there must be an `y` after an `x`.
+ So the correct answer could be `xyy`, or `yxy`. Which are C and D.
+
+2. (+5)
+The main process read and assign `bbb` with the value from the pipe and write to stdout.
+The child process write `aaa=x` into the pipe.
+Hence, the answer should be B: x.
+
+II. Page tables
+
+3. (+5) 0xFFFFD000 = 1111 1111 1111 1111 1101 0000 0000 0000
+The index should be 1 1111 1101 = 0x1FD
+
+4. (+5) No. Because they are in different pages
+
+III. Superpages
+
+5. It is (0x88000000 - 0x80000000) / 4096 = 32768. The answer is B: 32768.
+
+6. For superpages size 2Mb, it needs at least (0x88000000 - 0x80000000) / (2 * 1024 * 1024) = 64 pages. So the answer is B: 65.
+
+IV. Traps
+
+7. (+5)
+
+A. The design of xv6’s trap handling is the fact that the RISC-V hardware
+does not switch page tables when it forces a trap (because trampoline page address is the same in kernel space and user space). So it does not switch `satp`.
+B. ecall doesn't save register, it just jumps to `stvec` and `uservec` call after that instruction does the saving.
+C. trampoline pages is mapped in user page table.
+D. trampoline page address is the same across process.
+
+E. None of the above. This is correct.
+
+8. (+5) Because `usertrap` might call `yield` which gives up it cpu to another thread, where the `sepc` register could be modify. Therefore, we need to save and load it.
+
+V. Threads
+
+9. (+5)
+`main` function call `scheduler` and it stucks there without switching to other process. The answer is B. 
+
+10. (+5)
+She should print the return address of the new context. Which is `c->context.ra` in this case. D
+
+11. Even xv6 run on single CPU, it still switch between threads. So lock is needed.
+
+VI Copy-on-write fork
+
+12. (+5) Ben's check is incorrect, because there are pages that are originally read-only, and these pages can have address less than `p->sz`.
+Copying those pages and assign them with `read-write` permission isn't correct.
+
+VII. Feedback
+(+3)
+
+Total =  8 * 5 + 3 * 2 = 46 points
