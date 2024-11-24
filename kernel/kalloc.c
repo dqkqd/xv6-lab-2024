@@ -9,8 +9,6 @@
 #include "riscv.h"
 #include "defs.h"
 
-#define KNCPUS 1
-
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
@@ -33,14 +31,14 @@ void* kmemalloc(struct kmem*);
 void  kmemfree(struct kmem*, void*);
 void  kmemfreerange(struct kmem*);
 
-static struct kmem kmems[KNCPUS];
+static struct kmem kmems[NCPU];
 
 struct kmem * currentkmem(void);
 
 void
 kinit()
 {
-  for(int i = 0; i < KNCPUS; ++i){
+  for(int i = 0; i < NCPU; ++i){
     kmems[i].index = i;
     kmeminit(&kmems[i]);
     kmemfreerange(&kmems[i]);
@@ -75,7 +73,7 @@ kmeminit(struct kmem *kmem)
   uint64 npages = total / PGSIZE;
 
 
-  uint64 npages_per_cpu = npages / KNCPUS;
+  uint64 npages_per_cpu = npages / NCPU;
   uint64 pa_start = first + kmem->index * npages_per_cpu * PGSIZE;
   uint64 pa_end = first + (kmem->index + 1) * npages_per_cpu * PGSIZE;
   if(pa_end > last)
@@ -111,8 +109,8 @@ kmemalloc(struct kmem *kmem)
   r = kmemallocraw(kmem);
 
   int searched = 1;
-  while(r == 0 && searched < KNCPUS){
-    int index = (kmem->index + searched) % KNCPUS;
+  while(r == 0 && searched < NCPU){
+    int index = (kmem->index + searched) % NCPU;
     r = kmemallocraw(&kmems[index]);
     searched++;
   }
@@ -150,12 +148,18 @@ kmemfreerange(struct kmem *kmem)
 int
 getcpuindex(void)
 {
-  return (1 % KNCPUS);
+  int index;
+
+  push_off();
+  index = cpuid() % NCPU;
+  pop_off();
+
+  return index;
 }
 
 struct kmem*
 currentkmem(void)
 {
-  int cpuid = getcpuindex();
-  return &kmems[cpuid];
+  int index = getcpuindex();
+  return &kmems[index];
 }
