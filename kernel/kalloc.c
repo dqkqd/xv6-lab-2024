@@ -9,6 +9,8 @@
 #include "riscv.h"
 #include "defs.h"
 
+#define KNCPUS 1
+
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -18,15 +20,32 @@ struct run {
   struct run *next;
 };
 
-struct {
+struct kmem {
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+};
+
+static struct kmem kmems[KNCPUS];
+
+int
+getcpuindex(void)
+{
+  return (1 % KNCPUS);
+}
+
+struct kmem*
+currentkmem()
+{
+  int cpuid = getcpuindex();
+  return &kmems[cpuid];
+}
+
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+  struct kmem *kmem = currentkmem();
+  initlock(&kmem->lock, "kmem");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -56,10 +75,12 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  struct kmem *kmem = currentkmem();
+
+  acquire(&kmem->lock);
+  r->next = kmem->freelist;
+  kmem->freelist = r;
+  release(&kmem->lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -70,11 +91,13 @@ kalloc(void)
 {
   struct run *r;
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
+  struct kmem *kmem = currentkmem();
+
+  acquire(&kmem->lock);
+  r = kmem->freelist;
   if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+    kmem->freelist = r->next;
+  release(&kmem->lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
