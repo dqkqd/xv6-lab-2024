@@ -87,7 +87,7 @@ kmeminit(struct kmem *kmem)
 }
 
 void *
-kmemalloc(struct kmem *kmem)
+kmemallocraw(struct kmem *kmem)
 {
   struct run *r;
 
@@ -102,12 +102,34 @@ kmemalloc(struct kmem *kmem)
   return (void*)r;
 }
 
+void *
+kmemalloc(struct kmem *kmem)
+{
+  struct run *r;
+
+  // get pages from current kmem
+  r = kmemallocraw(kmem);
+
+  if(!r){
+    // steal pages from other CPUS
+    for (int i = 0; i < KNCPUS; ++i){
+      // skip current page
+      if(kmem->index == i)
+        continue;
+      if((r = kmemallocraw(&kmems[i])) != 0)
+        break;
+    }
+  }
+
+  return (void*)r;
+}
+
 void
 kmemfree(struct kmem *kmem, void *pa)
 {
   struct run *r;
 
-  if(((uint64)pa % PGSIZE) != 0 || (uint64)pa < kmem->pa_start || (uint64)pa >= kmem->pa_end)
+  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kmemfree");
 
   // Fill with junk to catch dangling refs.
