@@ -23,6 +23,14 @@
 #include "fs.h"
 #include "buf.h"
 
+struct freelist {
+  struct spinlock lock;
+  struct buf head;
+};
+void freelist_init(struct freelist *);
+void freelist_addhead(struct freelist *, struct buf *);
+void freelist_remove(struct buf *);
+
 struct {
   struct spinlock lock;
   struct buf buf[NBUF];
@@ -30,7 +38,7 @@ struct {
   // Linked list of all buffers, through prev/next.
   // Sorted by how recently the buffer was used.
   // head.next is most recent, head.prev is least.
-  struct buf head;
+  struct freelist freelist;
 } bcache;
 
 void
@@ -41,14 +49,10 @@ binit(void)
   initlock(&bcache.lock, "bcache");
 
   // Create linked list of buffers
-  bcache.head.prev = &bcache.head;
-  bcache.head.next = &bcache.head;
+  freelist_init(&bcache.freelist);
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
     initsleeplock(&b->lock, "buffer");
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
+    freelist_addhead(&bcache.freelist, b);
   }
 }
 
@@ -63,7 +67,7 @@ bget(uint dev, uint blockno)
   acquire(&bcache.lock);
 
   // Is the block already cached?
-  for(b = bcache.head.next; b != &bcache.head; b = b->next){
+  for(b = bcache.freelist.head.lnext; b != &bcache.freelist.head; b = b->lnext){
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
       release(&bcache.lock);
@@ -74,7 +78,7 @@ bget(uint dev, uint blockno)
 
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
-  for(b = bcache.head.prev; b != &bcache.head; b = b->prev){
+  for(b = bcache.freelist.head.lprev; b != &bcache.freelist.head; b = b->lprev){
     if(b->refcnt == 0) {
       b->dev = dev;
       b->blockno = blockno;
@@ -125,12 +129,8 @@ brelse(struct buf *b)
   b->refcnt--;
   if (b->refcnt == 0) {
     // no one is waiting for it.
-    b->next->prev = b->prev;
-    b->prev->next = b->next;
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
+    freelist_remove(b);
+    freelist_addhead(&bcache.freelist, b);
   }
   
   release(&bcache.lock);
@@ -150,4 +150,26 @@ bunpin(struct buf *b) {
   release(&bcache.lock);
 }
 
+void
+freelist_init(struct freelist *fl)
+{
+  fl->head.lprev = &fl->head;
+  fl->head.lnext = &fl->head;
+  initlock(&fl->lock, "bcache");
+}
 
+void
+freelist_addhead(struct freelist *fl, struct buf *b)
+{
+    b->lnext = fl->head.lnext;
+    b->lprev = &fl->head;
+    fl->head.lnext->lprev = b;
+    fl->head.lnext = b;
+}
+
+void
+freelist_remove(struct buf *b)
+{
+    b->lnext->lprev = b->lprev;
+    b->lprev->lnext = b->lnext;
+}
