@@ -23,6 +23,8 @@
 #include "fs.h"
 #include "buf.h"
 
+#define NQUEUE 13
+
 struct freelist {
   struct spinlock lock;
   struct buf head;
@@ -31,9 +33,20 @@ void freelist_init(struct freelist *);
 void freelist_addhead(struct freelist *, struct buf *);
 void freelist_remove(struct buf *);
 
+struct hashqueue {
+  struct spinlock lock;
+  struct buf head;
+};
+void hashqueue_init(struct hashqueue *);
+void hashqueue_addhead(struct hashqueue *, struct buf *);
+void hashqueue_remove(struct buf *);
+uint hash(uint);
+
 struct {
   struct spinlock lock;
   struct buf buf[NBUF];
+
+  struct hashqueue hashqueue[NQUEUE];
 
   // Linked list of all buffers, through prev/next.
   // Sorted by how recently the buffer was used.
@@ -41,12 +54,17 @@ struct {
   struct freelist freelist;
 } bcache;
 
+struct hashqueue *gethashqueue(uint);
+
 void
 binit(void)
 {
   struct buf *b;
 
   initlock(&bcache.lock, "bcache");
+
+  for(int i = 0; i < NQUEUE; i++)
+    hashqueue_init(&bcache.hashqueue[i]);
 
   // Create linked list of buffers
   freelist_init(&bcache.freelist);
@@ -172,4 +190,42 @@ freelist_remove(struct buf *b)
 {
     b->lnext->lprev = b->lprev;
     b->lprev->lnext = b->lnext;
+}
+
+void
+hashqueue_init(struct hashqueue *hq)
+{
+  hq->head.hprev = &hq->head;
+  hq->head.hnext = &hq->head;
+  initlock(&hq->lock, "bcache");
+}
+
+void
+hashqueue_addhead(struct hashqueue *hq, struct buf *b)
+{
+    b->hnext = hq->head.hnext;
+    b->hprev = &hq->head;
+    hq->head.hnext->hprev = b;
+    hq->head.hnext = b;
+}
+
+void
+hashqueue_remove(struct buf *b)
+{
+    b->hnext->hprev = b->hprev;
+    b->hprev->hnext = b->hnext;
+}
+
+uint
+hash(uint value)
+{
+  value++; // avoid unused warning
+  return 0;
+}
+
+struct hashqueue *
+gethashqueue(uint blockno)
+{
+  uint index = hash(blockno) % NQUEUE;
+  return &bcache.hashqueue[index];
 }
