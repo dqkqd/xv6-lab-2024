@@ -23,7 +23,7 @@
 #include "fs.h"
 #include "buf.h"
 
-#define NQUEUE 13
+#define NQUEUE 29
 
 struct freelist {
   struct spinlock lock;
@@ -66,8 +66,6 @@ binit(void)
 {
   struct buf *b;
 
-  initlock(&bcache.lock, "bcache");
-
   for(int i = 0; i < NQUEUE; i++)
     hashqueue_init(&bcache.hashqueue[i]);
 
@@ -89,9 +87,6 @@ bget(uint dev, uint blockno)
 {
   struct buf *b;
 
-  // TODO: remove
-  acquire(&bcache.lock);
-
   // search from hashqueue first
   struct hashqueue* hq = gethashqueue(blockno);
 
@@ -99,19 +94,19 @@ bget(uint dev, uint blockno)
   for(b = hq->head.hnext; b != &hq->head; b = b->hnext){
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
+      release(&hq->lock);
 
       // this buffer is currently in freelist, we should remove it from freelist
-      // to avoid others access it
-      if(b->refcnt == 1 && isin_freelist(b)){
-        // TODO: do we need those locks?
+      // to avoid others accessing it
+      if(b->refcnt == 1){
+        // it must exist in freelist
+        if(!isin_freelist(b))
+          panic("bget: b must exist in freelist");
+
         acquire(&bcache.freelist.lock);
         remove_from_freelist(b);
         release(&bcache.freelist.lock);
       }
-      release(&hq->lock);
-
-      // TODO: remove
-      release(&bcache.lock);
 
       acquiresleep(&b->lock);
       return b;
@@ -133,9 +128,7 @@ bget(uint dev, uint blockno)
       struct hashqueue *oldhq = gethashqueue(b->blockno);
       if(isin_hashqueue(b)){
         if (!hashqueue_eq(hq, oldhq)) {
-          acquire(&oldhq->lock);
           remove_from_hashqueue(b);
-          release(&oldhq->lock);
           hashqueue_addhead(hq, b);
         }
       } else {
@@ -149,8 +142,6 @@ bget(uint dev, uint blockno)
       b->valid = 0;
       b->refcnt = 1;
 
-      // TODO: remove
-      release(&bcache.lock);
       acquiresleep(&b->lock);
       return b;
     }
@@ -191,27 +182,17 @@ brelse(struct buf *b)
 
   releasesleep(&b->lock);
 
-  // TODO: remove
-  acquire(&bcache.lock);
-  
   // this buffer must exist in some hashqueue
   if(!isin_hashqueue(b))
     panic("brelse: buffer must exist in hashqueue");
-  struct hashqueue *hq = gethashqueue(b->blockno);
 
-  acquire(&hq->lock);
   b->refcnt--;
   if(b->refcnt == 0){
     // no one is waiting for it.
     acquire(&bcache.freelist.lock);
-    remove_from_freelist(b);
     freelist_addhead(&bcache.freelist, b);
     release(&bcache.freelist.lock);
   }
-  release(&hq->lock);
-
-  // TODO: remove
-  release(&bcache.lock);
 }
 
 void
@@ -220,13 +201,9 @@ bpin(struct buf *b) {
   if(!isin_hashqueue(b))
     panic("brelse: buffer must exist in hashqueue");
   struct hashqueue *hq = gethashqueue(b->blockno);
-  // TODO: remove
-  acquire(&bcache.lock);
   acquire(&hq->lock);
   b->refcnt++;
   release(&hq->lock);
-  // TODO: remove
-  release(&bcache.lock);
 }
 
 void
@@ -235,13 +212,9 @@ bunpin(struct buf *b) {
   if(!isin_hashqueue(b))
     panic("brelse: buffer must exist in hashqueue");
   struct hashqueue *hq = gethashqueue(b->blockno);
-  // TODO: remove
-  acquire(&bcache.lock);
   acquire(&hq->lock);
   b->refcnt--;
   release(&hq->lock);
-  // TODO: remove
-  release(&bcache.lock);
 }
 
 void
@@ -255,10 +228,10 @@ freelist_init(struct freelist *fl)
 void
 freelist_addhead(struct freelist *fl, struct buf *b)
 {
-    b->lnext = fl->head.lnext;
-    b->lprev = &fl->head;
-    fl->head.lnext->lprev = b;
-    fl->head.lnext = b;
+  b->lnext = fl->head.lnext;
+  b->lprev = &fl->head;
+  fl->head.lnext->lprev = b;
+  fl->head.lnext = b;
 }
 
 
@@ -279,17 +252,25 @@ hashqueue_init(struct hashqueue *hq)
 void
 hashqueue_addhead(struct hashqueue *hq, struct buf *b)
 {
-    b->hnext = hq->head.hnext;
-    b->hprev = &hq->head;
-    hq->head.hnext->hprev = b;
-    hq->head.hnext = b;
+  b->hnext = hq->head.hnext;
+  b->hprev = &hq->head;
+  hq->head.hnext->hprev = b;
+  hq->head.hnext = b;
 }
 
 uint
 hash(uint value)
 {
-  value++; // avoid unused warning
-  return 0;
+  uint64 FNV_OFFSET = 0xcbf29ce484222325ULL;
+  uint64 FNV_PRIME = 0x100000001b3ULL;
+
+  uint64 hash = FNV_OFFSET;
+  for (int i = 0; i < sizeof(value); i++) {
+    hash ^= (value >> (i * 8)) & 0xFF;  // Extract each byte
+    hash *= FNV_PRIME;        // Multiply by the prime
+  }
+
+  return hash;
 }
 
 struct hashqueue *
