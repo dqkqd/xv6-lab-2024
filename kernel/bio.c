@@ -36,6 +36,7 @@ struct hashqueue {
   struct spinlock lock;
   struct buf head;
 };
+int  hashqueue_eq(struct hashqueue *, struct hashqueue *);
 void hashqueue_init(struct hashqueue *);
 void hashqueue_addhead(struct hashqueue *, struct buf *);
 uint hash(uint);
@@ -75,6 +76,8 @@ binit(void)
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
     initsleeplock(&b->lock, "buffer");
     freelist_addhead(&bcache.freelist, b);
+    // make sure this buffer is not exist in any hashqueue
+    remove_from_hashqueue(b);
   }
 }
 
@@ -86,26 +89,67 @@ bget(uint dev, uint blockno)
 {
   struct buf *b;
 
+  // TODO: remove
   acquire(&bcache.lock);
 
-  // Is the block already cached?
-  for(b = bcache.freelist.head.lnext; b != &bcache.freelist.head; b = b->lnext){
+  // search from hashqueue first
+  struct hashqueue* hq = gethashqueue(blockno);
+
+  acquire(&hq->lock);
+  for(b = hq->head.hnext; b != &hq->head; b = b->hnext){
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
+
+      // this buffer is currently in freelist, we should remove it from freelist
+      // to avoid others access it
+      if(b->refcnt == 1 && isin_freelist(b)){
+        // TODO: do we need those locks?
+        acquire(&bcache.freelist.lock);
+        remove_from_freelist(b);
+        release(&bcache.freelist.lock);
+      }
+      release(&hq->lock);
+
+      // TODO: remove
       release(&bcache.lock);
+
       acquiresleep(&b->lock);
       return b;
     }
   }
 
+  // need to get new buffer from freelist
+  acquire(&bcache.freelist.lock);
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
   for(b = bcache.freelist.head.lprev; b != &bcache.freelist.head; b = b->lprev){
     if(b->refcnt == 0) {
+      // remove this buffer from current freelist
+      remove_from_freelist(b);
+      // don't need to lock anymore
+      release(&bcache.freelist.lock);
+
+      // this buffer is currently in other's hashqueue, we should remove it from there
+      struct hashqueue *oldhq = gethashqueue(b->blockno);
+      if(isin_hashqueue(b)){
+        if (!hashqueue_eq(hq, oldhq)) {
+          acquire(&oldhq->lock);
+          remove_from_hashqueue(b);
+          release(&oldhq->lock);
+          hashqueue_addhead(hq, b);
+        }
+      } else {
+        // add to new hq
+        hashqueue_addhead(hq, b);
+      }
+      release(&hq->lock);
+
       b->dev = dev;
       b->blockno = blockno;
       b->valid = 0;
       b->refcnt = 1;
+
+      // TODO: remove
       release(&bcache.lock);
       acquiresleep(&b->lock);
       return b;
@@ -147,28 +191,56 @@ brelse(struct buf *b)
 
   releasesleep(&b->lock);
 
+  // TODO: remove
   acquire(&bcache.lock);
+  
+  // this buffer must exist in some hashqueue
+  if(!isin_hashqueue(b))
+    panic("brelse: buffer must exist in hashqueue");
+  struct hashqueue *hq = gethashqueue(b->blockno);
+
+  acquire(&hq->lock);
   b->refcnt--;
-  if (b->refcnt == 0) {
+  if(b->refcnt == 0){
     // no one is waiting for it.
+    acquire(&bcache.freelist.lock);
     remove_from_freelist(b);
     freelist_addhead(&bcache.freelist, b);
+    release(&bcache.freelist.lock);
   }
-  
+  release(&hq->lock);
+
+  // TODO: remove
   release(&bcache.lock);
 }
 
 void
 bpin(struct buf *b) {
+  // this buffer must exist in some hashqueue
+  if(!isin_hashqueue(b))
+    panic("brelse: buffer must exist in hashqueue");
+  struct hashqueue *hq = gethashqueue(b->blockno);
+  // TODO: remove
   acquire(&bcache.lock);
+  acquire(&hq->lock);
   b->refcnt++;
+  release(&hq->lock);
+  // TODO: remove
   release(&bcache.lock);
 }
 
 void
 bunpin(struct buf *b) {
+  // this buffer must exist in some hashqueue
+  if(!isin_hashqueue(b))
+    panic("brelse: buffer must exist in hashqueue");
+  struct hashqueue *hq = gethashqueue(b->blockno);
+  // TODO: remove
   acquire(&bcache.lock);
+  acquire(&hq->lock);
   b->refcnt--;
+  release(&hq->lock);
+  // TODO: remove
   release(&bcache.lock);
 }
 
@@ -189,6 +261,13 @@ freelist_addhead(struct freelist *fl, struct buf *b)
     fl->head.lnext = b;
 }
 
+
+int
+hashqueue_eq(struct hashqueue *lhs, struct hashqueue *rhs)
+{
+  return &lhs->head == &rhs->head;
+}
+
 void
 hashqueue_init(struct hashqueue *hq)
 {
@@ -204,13 +283,6 @@ hashqueue_addhead(struct hashqueue *hq, struct buf *b)
     b->hprev = &hq->head;
     hq->head.hnext->hprev = b;
     hq->head.hnext = b;
-}
-
-void
-hashqueue_remove(struct buf *b)
-{
-    b->hnext->hprev = b->hprev;
-    b->hprev->hnext = b->hnext;
 }
 
 uint
@@ -242,15 +314,19 @@ isin_hashqueue(struct buf *b)
 void
 remove_from_freelist(struct buf *b)
 {
-  b->lnext->lprev = b->lprev;
-  b->lprev->lnext = b->lnext;
+  if(b->lnext && b->lprev){
+    b->lnext->lprev = b->lprev;
+    b->lprev->lnext = b->lnext;
+  }
   b->lnext = b->lprev = 0;
 }
 
 void
 remove_from_hashqueue(struct buf *b)
 {
-  b->hnext->hprev = b->hprev;
-  b->hprev->hnext = b->hnext;
+  if(b->hnext && b->hprev){
+    b->hnext->hprev = b->hprev;
+    b->hprev->hnext = b->hnext;
+  }
   b->hnext = b->hprev = 0;
 }
