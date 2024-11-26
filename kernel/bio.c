@@ -31,7 +31,6 @@ struct freelist {
 };
 void freelist_init(struct freelist *);
 void freelist_addhead(struct freelist *, struct buf *);
-void freelist_remove(struct buf *);
 
 struct hashqueue {
   struct spinlock lock;
@@ -39,7 +38,6 @@ struct hashqueue {
 };
 void hashqueue_init(struct hashqueue *);
 void hashqueue_addhead(struct hashqueue *, struct buf *);
-void hashqueue_remove(struct buf *);
 uint hash(uint);
 
 struct {
@@ -55,6 +53,12 @@ struct {
 } bcache;
 
 struct hashqueue *gethashqueue(uint);
+
+// buf related functions
+int isin_freelist(struct buf *);
+int isin_hashqueue(struct buf *);
+void remove_from_freelist(struct buf *);
+void remove_from_hashqueue(struct buf *);
 
 void
 binit(void)
@@ -147,7 +151,7 @@ brelse(struct buf *b)
   b->refcnt--;
   if (b->refcnt == 0) {
     // no one is waiting for it.
-    freelist_remove(b);
+    remove_from_freelist(b);
     freelist_addhead(&bcache.freelist, b);
   }
   
@@ -186,13 +190,6 @@ freelist_addhead(struct freelist *fl, struct buf *b)
 }
 
 void
-freelist_remove(struct buf *b)
-{
-    b->lnext->lprev = b->lprev;
-    b->lprev->lnext = b->lnext;
-}
-
-void
 hashqueue_init(struct hashqueue *hq)
 {
   hq->head.hprev = &hq->head;
@@ -228,4 +225,32 @@ gethashqueue(uint blockno)
 {
   uint index = hash(blockno) % NQUEUE;
   return &bcache.hashqueue[index];
+}
+
+int
+isin_freelist(struct buf *b)
+{
+  return b->lprev != 0 || b->lnext != 0;
+}
+
+int
+isin_hashqueue(struct buf *b)
+{
+  return b->hprev != 0 || b->hnext != 0;
+}
+
+void
+remove_from_freelist(struct buf *b)
+{
+  b->lnext->lprev = b->lprev;
+  b->lprev->lnext = b->lnext;
+  b->lnext = b->lprev = 0;
+}
+
+void
+remove_from_hashqueue(struct buf *b)
+{
+  b->hnext->hprev = b->hprev;
+  b->hprev->hnext = b->hnext;
+  b->hnext = b->hprev = 0;
 }
