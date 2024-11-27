@@ -87,6 +87,9 @@ bget(uint dev, uint blockno)
 {
   struct buf *b;
 
+  // need to get new buffer from freelist
+  acquire(&bcache.freelist.lock);
+
   // search from hashqueue first
   struct hashqueue* hq = gethashqueue(blockno);
 
@@ -95,35 +98,15 @@ bget(uint dev, uint blockno)
     if(b->dev == dev && b->blockno == blockno){
       b->refcnt++;
       release(&hq->lock);
-
-      // this buffer is currently in freelist, we should remove it from freelist
-      // to avoid others accessing it
-      if(b->refcnt == 1){
-        // it must exist in freelist
-        if(!isin_freelist(b))
-          panic("bget: b must exist in freelist");
-
-        acquire(&bcache.freelist.lock);
-        remove_from_freelist(b);
-        release(&bcache.freelist.lock);
-      }
-
+      release(&bcache.freelist.lock);
       acquiresleep(&b->lock);
       return b;
     }
   }
-
-  // need to get new buffer from freelist
-  acquire(&bcache.freelist.lock);
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
   for(b = bcache.freelist.head.lprev; b != &bcache.freelist.head; b = b->lprev){
     if(b->refcnt == 0) {
-      // remove this buffer from current freelist
-      remove_from_freelist(b);
-      // don't need to lock anymore
-      release(&bcache.freelist.lock);
-
       // this buffer is currently in other's hashqueue, we should remove it from there
       struct hashqueue *oldhq = gethashqueue(b->blockno);
       if(isin_hashqueue(b)){
@@ -135,13 +118,12 @@ bget(uint dev, uint blockno)
         // add to new hq
         hashqueue_addhead(hq, b);
       }
-      release(&hq->lock);
-
       b->dev = dev;
       b->blockno = blockno;
       b->valid = 0;
       b->refcnt = 1;
-
+      release(&bcache.freelist.lock);
+      release(&hq->lock);
       acquiresleep(&b->lock);
       return b;
     }
@@ -185,14 +167,10 @@ brelse(struct buf *b)
   // this buffer must exist in some hashqueue
   if(!isin_hashqueue(b))
     panic("brelse: buffer must exist in hashqueue");
-
+  struct hashqueue *hq = gethashqueue(b->blockno);
+  acquire(&hq->lock);
   b->refcnt--;
-  if(b->refcnt == 0){
-    // no one is waiting for it.
-    acquire(&bcache.freelist.lock);
-    freelist_addhead(&bcache.freelist, b);
-    release(&bcache.freelist.lock);
-  }
+  release(&hq->lock);
 }
 
 void
@@ -222,7 +200,7 @@ freelist_init(struct freelist *fl)
 {
   fl->head.lprev = &fl->head;
   fl->head.lnext = &fl->head;
-  initlock(&fl->lock, "bcache");
+  initlock(&fl->lock, "bcache.freelist");
 }
 
 void
@@ -246,7 +224,7 @@ hashqueue_init(struct hashqueue *hq)
 {
   hq->head.hprev = &hq->head;
   hq->head.hnext = &hq->head;
-  initlock(&hq->lock, "bcache");
+  initlock(&hq->lock, "bcache.hashqueue");
 }
 
 void
@@ -261,16 +239,7 @@ hashqueue_addhead(struct hashqueue *hq, struct buf *b)
 uint
 hash(uint value)
 {
-  uint64 FNV_OFFSET = 0xcbf29ce484222325ULL;
-  uint64 FNV_PRIME = 0x100000001b3ULL;
-
-  uint64 hash = FNV_OFFSET;
-  for (int i = 0; i < sizeof(value); i++) {
-    hash ^= (value >> (i * 8)) & 0xFF;  // Extract each byte
-    hash *= FNV_PRIME;        // Multiply by the prime
-  }
-
-  return hash;
+  return value;
 }
 
 struct hashqueue *
@@ -281,26 +250,11 @@ gethashqueue(uint blockno)
 }
 
 int
-isin_freelist(struct buf *b)
-{
-  return b->lprev != 0 || b->lnext != 0;
-}
-
-int
 isin_hashqueue(struct buf *b)
 {
   return b->hprev != 0 || b->hnext != 0;
 }
 
-void
-remove_from_freelist(struct buf *b)
-{
-  if(b->lnext && b->lprev){
-    b->lnext->lprev = b->lprev;
-    b->lprev->lnext = b->lnext;
-  }
-  b->lnext = b->lprev = 0;
-}
 
 void
 remove_from_hashqueue(struct buf *b)
