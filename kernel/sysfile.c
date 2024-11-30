@@ -16,6 +16,11 @@
 #include "file.h"
 #include "fcntl.h"
 
+struct symlinkdesc {
+  char target[MAXPATH]; // target that this symlink points to
+};
+struct inode* resolve_symlink(struct inode *, int);
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -307,7 +312,7 @@ sys_open(void)
   char path[MAXPATH];
   int fd, omode;
   struct file *f;
-  struct inode *ip;
+  struct inode *ip, *sym;
   int n;
 
   argint(1, &omode);
@@ -327,7 +332,17 @@ sys_open(void)
       end_op();
       return -1;
     }
+
+    // lock first so we can fetch data from disk
     ilock(ip);
+
+    if ((sym = resolve_symlink(ip, omode)) == 0){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+
+    ip = sym;
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -501,5 +516,82 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH], path[MAXPATH];
+  int targetlen, pathlen;
+  struct inode *ip;
+
+  if((targetlen = argstr(0, target, MAXPATH)) < 0)
+    return -1;
+  if((pathlen = argstr(1, path, MAXPATH)) < 0)
+    return -1;
+
+  // avoid linking to itself
+  if(targetlen == pathlen && memcmp(target, path, targetlen) == 0)
+    return -1;
+
+  begin_op();
+
+  // check if the symlink exists
+  if((ip = namei(path)) != 0){
+    ilock(ip);
+  }
+  // otherwise create it, if this operation succeeded, we can be sure that `ip` is locked.
+  else if ((ip = create(path, T_SYMLINK, 0, 0)) == 0){
+    end_op();
+    return -1;
+  }
+
+  // save symlink targets to inode block
+  struct symlinkdesc symlinkdesc;
+  memset(symlinkdesc.target, 0, MAXPATH);
+  memmove(symlinkdesc.target, target, targetlen);
+  if(writei(ip, 0, (uint64)&symlinkdesc, 0, sizeof(symlinkdesc)) != sizeof(symlinkdesc)){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  iunlockput(ip);
+  end_op();
+  return 0;
+}
+
+// resolve symbolic link, caller must hold the lock
+struct inode*
+resolve_symlink(struct inode *ip, int omode)
+{
+  int i;
+  struct inode *next;
+  struct symlinkdesc symlinkdesc;
+
+  // do not resolve symlink
+  if(omode & O_NOFOLLOW)
+    return ip;
+
+  // resolve with depth = 10 to avoid cyclic symlink
+  for(i = 0; i < 10; i++){
+    // not a symlink
+    if(ip->type != T_SYMLINK)
+      return ip;
+
+    // invalid symlink description
+    if(readi(ip, 0, (uint64)&symlinkdesc, 0, sizeof(symlinkdesc)) != sizeof(symlinkdesc))
+      return ip;
+
+    // symlink points to an invalid location
+    if((next = namei(symlinkdesc.target)) == 0)
+      return 0;
+
+    iunlockput(ip);
+    ip = next;
+    ilock(ip);
+  }
+
   return 0;
 }
