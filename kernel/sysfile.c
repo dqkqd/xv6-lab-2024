@@ -503,3 +503,17 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  panic("sys_mmap: todo");
+  return -1;
+}
+
+uint64
+sys_munmap(void)
+{
+  panic("sys_munmap: todo");
+  return -1;
+}
