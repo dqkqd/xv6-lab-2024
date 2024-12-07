@@ -507,8 +507,47 @@ sys_pipe(void)
 uint64
 sys_mmap(void)
 {
-  panic("sys_mmap: todo");
+  uint64 va;
+
+  struct proc *p = myproc();
+
+  // find a non-busy vma
+  struct vma *vma;
+  for(vma=p->vma; vma < &p->vma[NVMA]; vma++){
+    if (!vma->busy) {
+      goto found;
+    }
+  }
+
+  printf("sys_mmap: too many mmap calls");
   return -1;
+
+found:
+  argaddr(0, &va);
+  if (va != 0)
+    panic("sys_mmap: va must be 0 for now");
+
+  argint(1, &vma->len);
+  argint(2, &vma->prot);
+  argint(3, &vma->flags);
+  if(argfd(4, 0, &vma->f) < 0) {
+    printf("sys_mmap: invalid file descriptor");
+    return -1;
+  }
+  argint(5, &vma->offset);
+
+  // roundup size
+  vma->len = PGROUNDUP(vma->len);
+
+  // assign address range and make sure no one can touch this
+  vma->addr = p->sz;
+  p->sz += vma->len;
+  vma->busy = 1;
+
+  // duplicate to increment ref
+  filedup(vma->f);
+
+  return vma->addr;
 }
 
 uint64
