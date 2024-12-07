@@ -79,6 +79,21 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
+#define NVMA 16
+
+struct vma {
+  uint8 busy;   // flag indicates that this vma is in used
+
+  uint64 addr;  // virtual address that mmap are mapped to
+  int len;   // the number of bytes to map, this must fit into PGSIZE boundaries
+
+  int prot;
+  int flags;
+  int offset;
+
+  struct file *f;
+};
+
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
@@ -104,4 +119,6 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  
+  struct vma vma[NVMA];
 };
