@@ -180,3 +180,25 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+
+// Load from file f.
+// addr is kernel address.
+int
+fileload(struct file *f, uint64 addr, int off)
+{
+  int r = 0;
+
+  if(f->readable == 0)
+    return -1;
+
+  if(f->type != FD_INODE)
+    panic("fileload: unsupported");
+
+  ilock(f->ip);
+  if((r = readi(f->ip, 0, addr, off, PGSIZE)) < 0) {
+    panic("fileload: unable to load file");
+  }
+  iunlock(f->ip);
+
+  return r;
+}
