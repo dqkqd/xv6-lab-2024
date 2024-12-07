@@ -507,13 +507,135 @@ sys_pipe(void)
 uint64
 sys_mmap(void)
 {
-  panic("sys_mmap: todo");
+  uint64 va;
+
+  struct proc *p = myproc();
+
+  // find a non-busy vma
+  struct vma *vma;
+  for(vma=p->vma; vma < &p->vma[NVMA]; vma++){
+    if (!vma->busy) {
+      goto found;
+    }
+  }
+
+  printf("sys_mmap: too many mmap calls");
   return -1;
+
+found:
+  argaddr(0, &va);
+  if (va != 0)
+    panic("sys_mmap: va must be 0 for now");
+
+  argint(1, &vma->len);
+  argint(2, &vma->prot);
+  argint(3, &vma->flags);
+  if(argfd(4, 0, &vma->f) < 0)
+    return -1;
+
+  // Only support inode
+  if(vma->f->type != FD_INODE)
+    panic("sys_mmap: unsupport filetype");
+
+  // Try to mmap a file that is not readable
+  if(!vma->f->readable && (vma->prot & PROT_READ))
+    return -1;
+
+  // Try to mmap a file that is not writeable without private mapping
+  if(
+    // This file is not writable
+    !vma->f->writable
+    // but it is mapped with writeable protection
+    && (vma->prot & PROT_WRITE)
+    // in shared mode
+    && (vma->flags & MAP_SHARED))
+  {
+    return -1;
+  }
+
+  argint(5, &vma->off);
+
+  // Roundup the size
+  vma->len = PGROUNDUP(vma->len);
+
+  // assign address range and make sure no one can touch this
+  vma->addr = p->sz;
+  vma->busy = 1;
+  // Haven't mapped anything
+  vma->from = vma->to = vma->addr;
+
+  // Increment file ref
+  filedup(vma->f);
+
+  p->sz += vma->len;
+
+  return vma->addr;
 }
 
 uint64
 sys_munmap(void)
 {
-  panic("sys_munmap: todo");
-  return -1;
+  uint64 va;
+  int len;
+
+  argaddr(0, &va);
+  argint(1, &len);
+
+  if(va % PGSIZE != 0)
+    panic("sys_munmap: invalid address");
+  if(len % PGSIZE != 0)
+    panic("sys_munmap: invalid length");
+
+  struct proc *p = myproc();
+
+  struct vma *vma;
+  if((vma = vma_getmapped(va)) == 0)
+    return -1;
+
+  // Only support inode
+  if(vma->f->type != FD_INODE)
+    panic("sys_mmap: unsupport filetype");
+
+  // It is writeable and is shared, then we need to write it back
+  // TODO: check dirty
+  if((vma->prot & PROT_WRITE) && (vma->flags & MAP_SHARED))
+  {
+    // Get file offset
+    int off = va - vma->addr + vma->off;
+    // filesave could fail, in case offset exceeding eof
+    // but we actually don't care about that
+    filesave(vma->f, va, off, len);
+  }
+
+  uint64 from = va;
+  uint64 to = va + len;
+
+  // adjust the range
+  if(from < vma->from)
+    from = vma->from;
+  if(to > vma->to)
+    to = vma->to;
+
+  // must not leave a hole between `vma->from` and `vma->to`
+  if(from > vma->from && to < vma->to){
+    // remove everything from the left for now
+    from = vma->from;
+  }
+
+  if(from < to){
+    uint64 size = to - from;
+    uvmunmap(p->pagetable, from, size / PGSIZE, 1);
+
+    // since we do not leave a hole between from and to,
+    // vma->from must equal to
+    vma->from = to;
+
+    // check if everything is dropped
+    if(vma->from == vma->addr + vma->len){
+      vma->busy = 0;
+      fileclose(vma->f);
+    }
+  }
+
+  return 0;
 }

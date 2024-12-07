@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -702,4 +703,91 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+vma_hasaddr(struct vma *vma, uint64 addr)
+{
+  return vma->addr <= addr && addr < vma->addr + vma->len;
+}
+
+// Get mapped vma for a given address
+// Return 0 if there is no such vma
+struct vma*
+vma_getmapped(uint64 addr)
+{
+  struct proc *p = myproc();
+  struct vma* vma;
+  for(vma=p->vma; vma < &p->vma[NVMA]; vma++){
+    if(vma->busy && vma_hasaddr(vma, addr)){
+      return vma;
+    }
+  }
+  return 0;
+}
+
+// Lazy load mapped addr
+// Return 0 on success, -1 on failure
+int
+vma_loadaddr(struct vma* vma, uint64 addr)
+{
+  if(addr + PGSIZE != vma->from && vma->to != addr)
+    panic("vma_loadfile: only extend one page at a time");
+
+  // Calculate page permission
+  int perm = 0;
+  if(vma->prot & PROT_READ)
+    perm |= PTE_R;
+  if(vma->prot & PROT_WRITE)
+    perm |= PTE_W | PTE_R;
+
+  // Cannot read or write file
+  if(perm == 0)
+    return -1;
+
+  struct proc *p = myproc();
+
+  // File offset to be load
+  int off = vma->off + addr - vma->addr;
+
+  char *mem = kalloc();
+  memset(mem, 0, PGSIZE);
+
+  if(mappages(p->pagetable, addr, PGSIZE, (uint64)mem, perm | PTE_U) < 0)
+    return -1;
+
+  // load file into mem
+  if(fileload(vma->f, (uint64)mem, off) < 0)
+    return -1;
+
+  // remember it
+  if(vma->from == addr + PGSIZE)
+    vma->from = addr;
+  else if(vma->to == addr)
+    vma->to = addr + PGSIZE;
+
+  return 0;
+}
+
+// Load address from mapped file
+int
+vma_loadfile(struct vma *vma, uint64 addr)
+{
+  if(addr % PGSIZE != 0)
+    panic("vma_loadfile: invalid address");
+
+  if(addr >= vma->from && addr < vma->to)
+    panic("vma_loadfile: load already loaded address");
+
+  uint64 va;
+
+  // extend to the left
+  for(va=vma->from; va >= addr && va >= PGSIZE; va -= PGSIZE)
+    vma_loadaddr(vma, va);
+
+  // extend to the right
+  for(va=vma->to; va <= addr; va += PGSIZE)
+    vma_loadaddr(vma, va);
+
+  return 0;
 }

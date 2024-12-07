@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -68,9 +69,22 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
-    setkilled(p);
+    int good = 0;
+
+    struct vma *vma;
+    // if this is vma
+    if((vma = vma_getmapped(r_stval())) != 0){
+      // then try to load from the the file
+      if(vma_loadfile(vma, r_stval()) >= 0){
+        good = 1;
+      }
+    }
+
+    if (good == 0) {
+      printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+      setkilled(p);
+    }
   }
 
   if(killed(p))

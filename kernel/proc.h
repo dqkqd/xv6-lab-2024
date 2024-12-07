@@ -82,16 +82,18 @@ struct trapframe {
 #define NVMA 16
 
 struct vma {
-  uint8 busy;   // flag indicates that this vma is in used
+  uint8 busy;       // flag indicates that this vma is in used
 
-  uint64 addr;  // virtual address that mmap are mapped to
-  int len;   // the number of bytes to map, this must fit into PGSIZE boundaries
+  uint64 addr;      // virtual address that mmap are mapped to
+  int len;          // the number of bytes to map, this must fit into PGSIZE boundaries
 
-  int prot;
-  int flags;
-  int offset;
+  int prot;         // protection flag
+  int flags;        // Whether this is private mode or shared mode
+  int off;          // Offset in the file
 
-  struct file *f;
+  uint64 from, to;  // Mapped address range. Only address from range: [from; to) can be used
+
+  struct file *f;   // Mapped file
 };
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
