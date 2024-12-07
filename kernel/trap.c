@@ -68,9 +68,39 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
-    setkilled(p);
+    int good = 0;
+
+    // load page fault
+    if(r_scause() == 0xd){
+      struct vma *vma;
+      uint64 addr;
+
+      for(vma=p->vma; vma < &p->vma[NVMA]; vma++){
+        // only check those busy with correct address range
+        addr = r_stval();
+        if(vma->busy && vma->addr <= addr && addr < vma->addr + vma->len) {
+          // allocate addr
+          int off = addr - vma->addr;
+          
+          char *mem;
+          mem = kalloc();
+          memset(mem, 0, PGSIZE);
+          // TODO: correct permission later
+          mappages(p->pagetable, addr, PGSIZE, (uint64)mem, PTE_R|PTE_U); 
+          if (fileload(vma->f, (uint64)mem, vma->offset + off) < 0) {
+            panic("cannot use fileload");
+          }
+          good = 1;
+          break;
+        }
+      }
+    }
+
+    if (good == 0) {
+      printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+      setkilled(p);
+    }
   }
 
   if(killed(p))
