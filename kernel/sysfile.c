@@ -553,6 +553,17 @@ found:
 uint64
 sys_munmap(void)
 {
-  panic("sys_munmap: todo");
-  return -1;
+  uint64 va;
+  int len;
+
+  argaddr(0, &va);
+  argint(1, &len);
+
+  struct proc *p = myproc();
+
+  // TODO: handle panic
+  uvmunmap(p->pagetable, va, len / PGSIZE, 1);
+
+  // TODO: handle remove reference in file
+  return 0;
 }
