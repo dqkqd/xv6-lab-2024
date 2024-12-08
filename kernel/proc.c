@@ -165,6 +165,14 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  struct vma *vma;
+  for(vma=p->vma; vma < &p->vma[NVMA]; vma++) {
+    if(vma->busy)
+      vma_unload(p->pagetable, vma, vma->addr, vma->addr + vma->len);
+  }
+  p->vma_addr = TRAPFRAME;
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -177,12 +185,6 @@ freeproc(struct proc *p)
   p->xstate = 0;
   p->state = UNUSED;
 
-  struct vma *vma;
-  for(vma=p->vma; vma < &p->vma[NVMA]; vma++) {
-    if(vma->busy)
-      vma_unload(vma, vma->addr, vma->addr + vma->len);
-  }
-  p->vma_addr = TRAPFRAME;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -328,6 +330,24 @@ fork(void)
 
   release(&np->lock);
 
+  // TODO: cow??
+  // copy vma from parent to children
+  for(i = 0; i < NVMA; i++){
+    struct vma *vma = &np->vma[i];
+    memmove(vma, &p->vma[i], sizeof(struct vma));
+    if(vma->busy){
+      // TODO: cow??
+      uint64 from = vma->from;
+      uint64 to = vma->to;
+      if(from < to){
+        vma->to = vma->from;
+        vma_loadfile(np->pagetable, vma, to - PGSIZE);
+      }
+      filedup(vma->f);
+    }
+  }
+  np->vma_addr = p->vma_addr;
+
   acquire(&wait_lock);
   np->parent = p;
   release(&wait_lock);
@@ -335,6 +355,7 @@ fork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
+
 
   return pid;
 }
@@ -373,6 +394,13 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
+
+  struct vma *vma;
+  for(vma=p->vma; vma < &p->vma[NVMA]; vma++) {
+    if(vma->busy)
+      vma_unload(p->pagetable, vma, vma->addr, vma->addr + vma->len);
+  }
+  p->vma_addr = TRAPFRAME;
 
   begin_op();
   iput(p->cwd);
@@ -732,10 +760,10 @@ vma_getmapped(uint64 addr)
 // Lazy load mapped addr
 // Return 0 on success, -1 on failure
 int
-vma_loadaddr(struct vma* vma, uint64 addr)
+vma_loadaddr(pagetable_t pagetable, struct vma* vma, uint64 addr)
 {
   if(addr + PGSIZE != vma->from && vma->to != addr)
-    panic("vma_loadfile: only extend one page at a time");
+    panic("vma_loadaddr: only extend one page at a time");
 
   // Calculate page permission
   int perm = 0;
@@ -748,15 +776,13 @@ vma_loadaddr(struct vma* vma, uint64 addr)
   if(perm == 0)
     return -1;
 
-  struct proc *p = myproc();
-
   // File offset to be load
   int off = vma->off + addr - vma->addr;
 
   char *mem = kalloc();
   memset(mem, 0, PGSIZE);
 
-  if(mappages(p->pagetable, addr, PGSIZE, (uint64)mem, perm | PTE_U) < 0)
+  if(mappages(pagetable, addr, PGSIZE, (uint64)mem, perm | PTE_U) < 0)
     return -1;
 
   // load file into mem
@@ -774,7 +800,7 @@ vma_loadaddr(struct vma* vma, uint64 addr)
 
 // Load address from mapped file
 int
-vma_loadfile(struct vma *vma, uint64 addr)
+vma_loadfile(pagetable_t pagetable, struct vma *vma, uint64 addr)
 {
   if(addr % PGSIZE != 0)
     panic("vma_loadfile: invalid address");
@@ -786,17 +812,17 @@ vma_loadfile(struct vma *vma, uint64 addr)
 
   // extend to the left
   for(va=vma->from; va >= addr && va >= PGSIZE; va -= PGSIZE)
-    vma_loadaddr(vma, va);
+    vma_loadaddr(pagetable, vma, va);
 
   // extend to the right
   for(va=vma->to; va <= addr; va += PGSIZE)
-    vma_loadaddr(vma, va);
+    vma_loadaddr(pagetable, vma, va);
 
   return 0;
 }
 
 void
-vma_unload(struct vma *vma, uint64 from, uint64 to)
+vma_unload(pagetable_t pagetable, struct vma *vma, uint64 from, uint64 to)
 {
   if(!vma->busy){
     // already unloaded
@@ -806,17 +832,23 @@ vma_unload(struct vma *vma, uint64 from, uint64 to)
   from = PGROUNDDOWN(from);
   to = PGROUNDUP(to);
 
+  if(from != vma->addr && to != vma->addr + vma->len)
+    panic("Only unmmap at the start, or at the end, or the whole region");
+
   // adjust the range
   if(from < vma->from)
     from = vma->from;
   if(to > vma->to)
     to = vma->to;
 
-  struct proc *p = myproc();
-
   // zero range, do nothing
   if(from >= to)
     return;
+
+  // must not leave a hole between `vma->from` and `vma->to`
+  // remove everything from the left for now
+  if(from > vma->from)
+    from = vma->from;
 
   uint64 len = to - from;
 
@@ -831,13 +863,7 @@ vma_unload(struct vma *vma, uint64 from, uint64 to)
     filesave(vma->f, from, off, len);
   }
 
-  // must not leave a hole between `vma->from` and `vma->to`
-  // remove everything from the left for now
-  if(from > vma->from && to < vma->to){
-    from = vma->from;
-  }
-
-  uvmunmap(p->pagetable, from, len / PGSIZE, 1);
+  uvmunmap(pagetable, from, len / PGSIZE, 1);
 
   // since we do not leave a hole between from and to,
   // vma->from must equal to

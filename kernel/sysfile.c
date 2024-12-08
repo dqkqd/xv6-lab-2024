@@ -586,6 +586,8 @@ sys_munmap(void)
   if(len % PGSIZE != 0)
     panic("sys_munmap: invalid length");
 
+  struct proc *p = myproc();
+
   struct vma *vma;
   if((vma = vma_getmapped(va)) == 0)
     return -1;
@@ -594,7 +596,7 @@ sys_munmap(void)
   if(vma->f->type != FD_INODE)
     panic("sys_mmap: unsupport filetype");
 
-  vma_unload(vma, va, va + len);
+  vma_unload(p->pagetable, vma, va, va + len);
 
   return 0;
 }

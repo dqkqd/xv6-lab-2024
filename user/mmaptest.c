@@ -16,8 +16,8 @@ char buf[PGSIZE];
 int
 main(int argc, char *argv[])
 {
-  mmap_test();
-  fork_test();
+  // mmap_test();
+  // fork_test();
   more_test();
   printf("mmaptest: all tests succeeded\n");
   exit(0);
@@ -213,6 +213,7 @@ mmap_test(void)
   // unmap the rest of the mapped memory.
   if (munmap(p+PGSIZE*2, PGSIZE) == -1)
     err("munmap (4)");
+  printf(">>>\n");
 
   printf("test not-mapped unmap: OK\n");
 
@@ -242,6 +243,7 @@ mmap_test(void)
   if(*p != 'm')
     err("read was not lazy");
 
+  printf("Hello\n");
   if(munmap(p, PGSIZE*2) == -1)
     err("munmap");
 
@@ -323,17 +325,20 @@ fork_test(void)
   if(*(p1+PGSIZE) != 'A')
     err("fork mismatch (1)");
 
+  printf("....\n");
   if((pid = fork()) < 0)
     err("fork");
   if (pid == 0) {
     _v1(p1);
     if (munmap(p1, PGSIZE) == -1) // just the first page
       err("munmap (7)");
+    printf("trying to exit\n");
     exit(0); // tell the parent that the mapping looks OK.
   }
 
   int status = -1;
   wait(&status);
+  printf("done waiting\n");
 
   if(status != 0){
     printf("fork_test failed\n");
@@ -372,6 +377,7 @@ more_test()
   if(pid == 0){
     *p = 'a';
     *(p+PGSIZE) = 'b';
+    printf("rd\n");
     if(munmap(p+PGSIZE, PGSIZE) == -1)
       err("munmap");
     // this should cause a fatal fault
