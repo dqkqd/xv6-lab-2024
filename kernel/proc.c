@@ -178,8 +178,9 @@ freeproc(struct proc *p)
   p->state = UNUSED;
 
   struct vma *vma;
-  for(vma=p->vma; vma<&p->vma[NVMA]; vma++) {
-    vma->busy = 0;
+  for(vma=p->vma; vma < &p->vma[NVMA]; vma++) {
+    if(vma->busy)
+      vma_unload(vma, vma->addr, vma->addr + vma->len);
   }
   p->vma_addr = TRAPFRAME;
 }
