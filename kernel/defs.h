@@ -114,6 +114,7 @@ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 struct vma*     vma_getmapped(uint64 addr);
 int             vma_loadfile(struct vma *vma, uint64 addr);
+void            vma_unload(struct vma *vma, uint64 from, uint64 to);
 
 
 // swtch.S

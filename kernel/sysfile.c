@@ -586,8 +586,6 @@ sys_munmap(void)
   if(len % PGSIZE != 0)
     panic("sys_munmap: invalid length");
 
-  struct proc *p = myproc();
-
   struct vma *vma;
   if((vma = vma_getmapped(va)) == 0)
     return -1;
@@ -596,46 +594,7 @@ sys_munmap(void)
   if(vma->f->type != FD_INODE)
     panic("sys_mmap: unsupport filetype");
 
-  // It is writeable and is shared, then we need to write it back
-  // TODO: check dirty
-  if((vma->prot & PROT_WRITE) && (vma->flags & MAP_SHARED))
-  {
-    // Get file offset
-    int off = va - vma->addr + vma->off;
-    // filesave could fail, in case offset exceeding eof
-    // but we actually don't care about that
-    filesave(vma->f, va, off, len);
-  }
-
-  uint64 from = va;
-  uint64 to = va + len;
-
-  // adjust the range
-  if(from < vma->from)
-    from = vma->from;
-  if(to > vma->to)
-    to = vma->to;
-
-  // must not leave a hole between `vma->from` and `vma->to`
-  if(from > vma->from && to < vma->to){
-    // remove everything from the left for now
-    from = vma->from;
-  }
-
-  if(from < to){
-    uint64 size = to - from;
-    uvmunmap(p->pagetable, from, size / PGSIZE, 1);
-
-    // since we do not leave a hole between from and to,
-    // vma->from must equal to
-    vma->from = to;
-
-    // check if everything is dropped
-    if(vma->from == vma->addr + vma->len){
-      vma->busy = 0;
-      fileclose(vma->f);
-    }
-  }
+  vma_unload(vma, va, va + len);
 
   return 0;
 }
