@@ -559,7 +559,7 @@ found:
   vma->len = PGROUNDUP(vma->len);
 
   // assign address range and make sure no one can touch this
-  vma->addr = p->sz;
+  vma->addr = p->vma_addr - vma->len;
   vma->busy = 1;
   // Haven't mapped anything
   vma->from = vma->to = vma->addr;
@@ -567,7 +567,7 @@ found:
   // Increment file ref
   filedup(vma->f);
 
-  p->sz += vma->len;
+  p->vma_addr = vma->addr;
 
   return vma->addr;
 }

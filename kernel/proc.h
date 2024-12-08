@@ -123,4 +123,5 @@ struct proc {
   char name[16];               // Process name (debugging)
   
   struct vma vma[NVMA];
+  uint64 vma_addr;             // Address of the latest mapped vma, initially this is MAXVA
 };

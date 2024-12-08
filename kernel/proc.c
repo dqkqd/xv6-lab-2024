@@ -147,6 +147,7 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->vma_addr = TRAPFRAME;
   struct vma *vma;
   for(vma=p->vma; vma<&p->vma[NVMA]; vma++) {
     vma->busy = 0;
@@ -180,6 +181,7 @@ freeproc(struct proc *p)
   for(vma=p->vma; vma<&p->vma[NVMA]; vma++) {
     vma->busy = 0;
   }
+  p->vma_addr = TRAPFRAME;
 }
 
 // Create a user page table for a given process, with no user memory,
