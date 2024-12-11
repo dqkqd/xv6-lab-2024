@@ -75,7 +75,7 @@ usertrap(void)
     // if this is vma
     if((vma = vma_getmapped(r_stval())) != 0){
       // then try to load from the the file
-      if(vma_loadfile(vma, r_stval()) >= 0){
+      if(vma_loadfile(p->pagetable, vma, r_stval()) >= 0){
         good = 1;
       }
     }
