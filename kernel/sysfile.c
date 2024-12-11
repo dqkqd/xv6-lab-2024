@@ -561,8 +561,11 @@ found:
   // assign address range and make sure no one can touch this
   vma->addr = p->vma_addr - vma->len;
   vma->busy = 1;
-  // Haven't mapped anything
-  vma->mapped.from = vma->mapped.to = vma->addr;
+
+  vma->mapped.from = vma->addr;
+  vma->mapped.to = vma->addr + vma->len;
+  // Haven't loaded anything
+  vma->loaded.from = vma->loaded.to = vma->addr;
 
   // Increment file ref
   filedup(vma->f);
@@ -596,7 +599,5 @@ sys_munmap(void)
   if(vma->f->type != FD_INODE)
     panic("sys_mmap: unsupport filetype");
 
-  vma_unload(p->pagetable, vma, va, va + len);
-
-  return 0;
+  return vma_unload(p->pagetable, vma, va, va + len);
 }

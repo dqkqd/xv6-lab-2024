@@ -337,11 +337,11 @@ fork(void)
     memmove(vma, &p->vma[i], sizeof(struct vma));
     if(vma->busy){
       // TODO: cow??
-      uint64 from = vma->mapped.from;
-      uint64 to = vma->mapped.to;
+      uint64 from = vma->loaded.from;
+      uint64 to = vma->loaded.to;
       if(from < to){
-        vma->mapped.to = vma->mapped.from;
-        vma_loadfile(np->pagetable, vma, to - PGSIZE);
+        vma->loaded.from = vma->loaded.to;
+        vma_loadfile(np->pagetable, vma, from, to);
       }
       filedup(vma->f);
     }
@@ -398,7 +398,7 @@ exit(int status)
   struct vma *vma;
   for(vma=p->vma; vma < &p->vma[NVMA]; vma++) {
     if(vma->busy)
-      vma_unload(p->pagetable, vma, vma->addr, vma->addr + vma->len);
+      vma_unload(p->pagetable, vma, vma->mapped.from, vma->mapped.to);
   }
   p->vma_addr = TRAPFRAME;
 
@@ -736,12 +736,6 @@ procdump(void)
   }
 }
 
-int
-vma_hasaddr(struct vma *vma, uint64 addr)
-{
-  return vma->addr <= addr && addr < vma->addr + vma->len;
-}
-
 // Get mapped vma for a given address
 // Return 0 if there is no such vma
 struct vma*
@@ -750,20 +744,47 @@ vma_getmapped(uint64 addr)
   struct proc *p = myproc();
   struct vma* vma;
   for(vma=p->vma; vma < &p->vma[NVMA]; vma++){
-    if(vma->busy && vma_hasaddr(vma, addr)){
+    if(vma->busy && vma->mapped.from <= addr && addr < vma->mapped.to){
       return vma;
     }
   }
   return 0;
 }
 
-// Lazy load mapped addr
-// Return 0 on success, -1 on failure
+// Load address from mapped file
 int
-vma_loadaddr(pagetable_t pagetable, struct vma* vma, uint64 addr)
+vma_loadfile(pagetable_t pagetable, struct vma *vma, uint64 from, uint64 to)
 {
-  if(addr + PGSIZE != vma->mapped.from && vma->mapped.to != addr)
-    panic("vma_loadaddr: only extend one page at a time");
+  if(from >= to)
+    panic("vma_loadfile: invalid range");
+
+  if((to - from) % PGSIZE != 0){
+    printf("vma_loadfile: invalid range offset");
+    return -1;
+  }
+
+
+  // first load
+  if (vma->loaded.from == vma->loaded.to){
+    vma->loaded.from = vma->loaded.to = from;
+  }
+
+  if(
+    (vma->loaded.from <= from && from < vma->loaded.to) ||
+    (vma->loaded.from < to && to <= vma->loaded.to)
+  )
+  {
+    printf("vma_loadfile: load already loaded address");
+    return -1;
+  }
+
+  if(from < vma->mapped.from || vma->mapped.to < to){
+    printf("vma_loadfile: load unmapped address");
+    return -1;
+  }
+
+  if(to != vma->loaded.from && from != vma->loaded.to)
+    panic("vma_loadfile: handle holes");
 
   // Calculate page permission
   int perm = 0;
@@ -777,78 +798,72 @@ vma_loadaddr(pagetable_t pagetable, struct vma* vma, uint64 addr)
     return -1;
 
   // File offset to be load
-  int off = vma->off + addr - vma->addr;
-
-  char *mem = kalloc();
-  memset(mem, 0, PGSIZE);
-
-  if(mappages(pagetable, addr, PGSIZE, (uint64)mem, perm | PTE_U) < 0)
-    return -1;
-
-  // load file into mem
-  if(fileload(vma->f, (uint64)mem, off) < 0)
-    return -1;
-
-  // remember it
-  if(vma->mapped.from == addr + PGSIZE)
-    vma->mapped.from = addr;
-  else if(vma->mapped.to == addr)
-    vma->mapped.to = addr + PGSIZE;
-
-  return 0;
-}
-
-// Load address from mapped file
-int
-vma_loadfile(pagetable_t pagetable, struct vma *vma, uint64 addr)
-{
-  if(addr % PGSIZE != 0)
-    panic("vma_loadfile: invalid address");
-
-  if(addr >= vma->mapped.from && addr < vma->mapped.to)
-    panic("vma_loadfile: load already loaded address");
+  int off = vma->off + from - vma->addr;
 
   uint64 va;
 
-  // extend to the left
-  for(va=vma->mapped.from; va >= addr && va >= PGSIZE; va -= PGSIZE)
-    vma_loadaddr(pagetable, vma, va);
+  for(va = from; va < to; va += PGSIZE, off += PGSIZE){
+    char *mem = kalloc();
+    memset(mem, 0, PGSIZE);
 
-  // extend to the right
-  for(va=vma->mapped.to; va <= addr; va += PGSIZE)
-    vma_loadaddr(pagetable, vma, va);
+    if(mappages(pagetable, va, PGSIZE, (uint64)mem, perm | PTE_U) < 0)
+      panic("vma_loadfile: todo rollback");
+
+    // load file into mem
+    if(fileload(vma->f, (uint64)mem, off) < 0)
+      panic("vma_loadfile: todo rollback");
+  }
+
+  if(from < vma->loaded.from)
+    vma->loaded.from = from;
+  if(to > vma->loaded.to)
+    vma->loaded.to = to;
 
   return 0;
 }
 
-void
+int
 vma_unload(pagetable_t pagetable, struct vma *vma, uint64 from, uint64 to)
 {
   if(!vma->busy){
     // already unloaded
-    return;
+    return -1;
   }
 
   from = PGROUNDDOWN(from);
   to = PGROUNDUP(to);
 
-  if(from != vma->addr && to != vma->addr + vma->len)
-    panic("Only unmmap at the start, or at the end, or the whole region");
-
-  // adjust the range
-  if(from < vma->mapped.from)
-    from = vma->mapped.from;
-  if(to > vma->mapped.to)
-    to = vma->mapped.to;
-
   // zero range, do nothing
   if(from >= to)
-    return;
+    return 0;
 
-  // must not leave a hole between `vma->from` and `vma->to`
-  // remove everything from the left for now
-  if(from > vma->mapped.from)
-    from = vma->mapped.from;
+  if(from < vma->mapped.from || to > vma->mapped.to){
+    printf("vma_unload: unmap unmapped region\n");
+    return -1;
+  }
+
+  // update mapped region
+  if(to == vma->mapped.to){
+    vma->mapped.to = from;
+  } else if(from == vma->mapped.from){
+    vma->mapped.from = to;
+  } else {
+    panic("vma_unload: unsupported leaving a hole inside mapped region");
+  }
+
+  if(from < vma->loaded.from)
+    from = vma->loaded.from;
+  if(to > vma->loaded.to)
+    to = vma->loaded.to;
+
+  // update loaded region
+  if(to == vma->loaded.to){
+    vma->loaded.to = from;
+  } else if(from == vma->loaded.from){
+    vma->loaded.from = to;
+  } else {
+    panic("vma_unload: unsupported leaving a hole inside loaded region");
+  }
 
   uint64 len = to - from;
 
@@ -857,21 +872,18 @@ vma_unload(pagetable_t pagetable, struct vma *vma, uint64 from, uint64 to)
   if((vma->prot & PROT_WRITE) && (vma->flags & MAP_SHARED))
   {
     // Get file offset
-    int off = from - vma->addr + vma->off;
+    int off = vma->off + from - vma->addr;
     // filesave could fail, in case offset exceeding eof
     // but we actually don't care about that
     filesave(vma->f, from, off, len);
   }
-
   uvmunmap(pagetable, from, len / PGSIZE, 1);
 
-  // since we do not leave a hole between from and to,
-  // vma->from must equal to
-  vma->mapped.from = to;
-
-  // check if everything is dropped
-  if(vma->mapped.from == vma->addr + vma->len){
+  // check if everything is unmapped
+  if(vma->mapped.from == vma->loaded.to){
     vma->busy = 0;
     fileclose(vma->f);
   }
+
+  return 0;
 }

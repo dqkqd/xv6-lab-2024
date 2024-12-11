@@ -113,8 +113,8 @@ int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 struct vma*     vma_getmapped(uint64 addr);
-int             vma_loadfile(pagetable_t, struct vma *vma, uint64 addr);
-void            vma_unload(pagetable_t, struct vma *vma, uint64 from, uint64 to);
+int             vma_loadfile(pagetable_t, struct vma *vma, uint64 from, uint64 to);
+int             vma_unload(pagetable_t, struct vma *vma, uint64 from, uint64 to);
 
 
 // swtch.S
