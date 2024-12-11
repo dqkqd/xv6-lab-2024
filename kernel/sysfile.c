@@ -562,7 +562,7 @@ found:
   vma->addr = p->vma_addr - vma->len;
   vma->busy = 1;
   // Haven't mapped anything
-  vma->from = vma->to = vma->addr;
+  vma->mapped.from = vma->mapped.to = vma->addr;
 
   // Increment file ref
   filedup(vma->f);

@@ -337,10 +337,10 @@ fork(void)
     memmove(vma, &p->vma[i], sizeof(struct vma));
     if(vma->busy){
       // TODO: cow??
-      uint64 from = vma->from;
-      uint64 to = vma->to;
+      uint64 from = vma->mapped.from;
+      uint64 to = vma->mapped.to;
       if(from < to){
-        vma->to = vma->from;
+        vma->mapped.to = vma->mapped.from;
         vma_loadfile(np->pagetable, vma, to - PGSIZE);
       }
       filedup(vma->f);
@@ -762,7 +762,7 @@ vma_getmapped(uint64 addr)
 int
 vma_loadaddr(pagetable_t pagetable, struct vma* vma, uint64 addr)
 {
-  if(addr + PGSIZE != vma->from && vma->to != addr)
+  if(addr + PGSIZE != vma->mapped.from && vma->mapped.to != addr)
     panic("vma_loadaddr: only extend one page at a time");
 
   // Calculate page permission
@@ -790,10 +790,10 @@ vma_loadaddr(pagetable_t pagetable, struct vma* vma, uint64 addr)
     return -1;
 
   // remember it
-  if(vma->from == addr + PGSIZE)
-    vma->from = addr;
-  else if(vma->to == addr)
-    vma->to = addr + PGSIZE;
+  if(vma->mapped.from == addr + PGSIZE)
+    vma->mapped.from = addr;
+  else if(vma->mapped.to == addr)
+    vma->mapped.to = addr + PGSIZE;
 
   return 0;
 }
@@ -805,17 +805,17 @@ vma_loadfile(pagetable_t pagetable, struct vma *vma, uint64 addr)
   if(addr % PGSIZE != 0)
     panic("vma_loadfile: invalid address");
 
-  if(addr >= vma->from && addr < vma->to)
+  if(addr >= vma->mapped.from && addr < vma->mapped.to)
     panic("vma_loadfile: load already loaded address");
 
   uint64 va;
 
   // extend to the left
-  for(va=vma->from; va >= addr && va >= PGSIZE; va -= PGSIZE)
+  for(va=vma->mapped.from; va >= addr && va >= PGSIZE; va -= PGSIZE)
     vma_loadaddr(pagetable, vma, va);
 
   // extend to the right
-  for(va=vma->to; va <= addr; va += PGSIZE)
+  for(va=vma->mapped.to; va <= addr; va += PGSIZE)
     vma_loadaddr(pagetable, vma, va);
 
   return 0;
@@ -836,10 +836,10 @@ vma_unload(pagetable_t pagetable, struct vma *vma, uint64 from, uint64 to)
     panic("Only unmmap at the start, or at the end, or the whole region");
 
   // adjust the range
-  if(from < vma->from)
-    from = vma->from;
-  if(to > vma->to)
-    to = vma->to;
+  if(from < vma->mapped.from)
+    from = vma->mapped.from;
+  if(to > vma->mapped.to)
+    to = vma->mapped.to;
 
   // zero range, do nothing
   if(from >= to)
@@ -847,8 +847,8 @@ vma_unload(pagetable_t pagetable, struct vma *vma, uint64 from, uint64 to)
 
   // must not leave a hole between `vma->from` and `vma->to`
   // remove everything from the left for now
-  if(from > vma->from)
-    from = vma->from;
+  if(from > vma->mapped.from)
+    from = vma->mapped.from;
 
   uint64 len = to - from;
 
@@ -867,10 +867,10 @@ vma_unload(pagetable_t pagetable, struct vma *vma, uint64 from, uint64 to)
 
   // since we do not leave a hole between from and to,
   // vma->from must equal to
-  vma->from = to;
+  vma->mapped.from = to;
 
   // check if everything is dropped
-  if(vma->from == vma->addr + vma->len){
+  if(vma->mapped.from == vma->addr + vma->len){
     vma->busy = 0;
     fileclose(vma->f);
   }
